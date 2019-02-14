@@ -14,6 +14,7 @@
 #include <policy/policy.h>
 #include <policy/fees.h>
 #include <reverse_iterator.h>
+#include <stats_logs/stats_collector.h>
 #include <streams.h>
 #include <timedata.h>
 #include <util.h>
@@ -101,6 +102,14 @@ void CTxMemPool::UpdateForDescendants(txiter updateIt, cacheMap &cachedDescendan
         }
     }
     mapTx.modify(updateIt, update_descendant_state(modifySize, modifyFee, modifyCount));
+
+    CollectStats();
+}
+
+void CTxMemPool::CollectStats() const {
+    auto& stats_collector = stats_logs::StatsCollector::GetInstance();
+    stats_collector.SetMempoolNumTransactions(mapTx.size());
+    stats_collector.SetMempoolUsedMemory(totalTxSize);
 }
 
 // vHashesToUpdate is the set of transaction hashes from a disconnected block
@@ -149,6 +158,8 @@ void CTxMemPool::UpdateTransactionsFromBlock(const std::vector<uint256> &vHashes
         }
         UpdateForDescendants(it, mapMemPoolDescendantsToUpdate, setAlreadyIncluded);
     }
+
+    CollectStats();
 }
 
 bool CTxMemPool::CalculateMemPoolAncestors(const CTxMemPoolEntry &entry, setEntries &setAncestors, uint64_t limitAncestorCount, uint64_t limitAncestorSize, uint64_t limitDescendantCount, uint64_t limitDescendantSize, std::string &errString, bool fSearchForParents /* = true */) const
@@ -226,6 +237,8 @@ void CTxMemPool::UpdateAncestorsOf(bool add, txiter it, setEntries &setAncestors
     for (txiter ancestorIt : setAncestors) {
         mapTx.modify(ancestorIt, update_descendant_state(updateSize, updateFee, updateCount));
     }
+
+    CollectStats();
 }
 
 void CTxMemPool::UpdateEntryForAncestors(txiter it, const setEntries &setAncestors)
@@ -240,6 +253,8 @@ void CTxMemPool::UpdateEntryForAncestors(txiter it, const setEntries &setAncesto
         updateSigOpsCost += ancestorIt->GetSigOpCost();
     }
     mapTx.modify(it, update_ancestor_state(updateSize, updateFee, updateCount, updateSigOpsCost));
+
+    CollectStats();
 }
 
 void CTxMemPool::UpdateChildrenForRemoval(txiter it)
@@ -248,6 +263,8 @@ void CTxMemPool::UpdateChildrenForRemoval(txiter it)
     for (txiter updateIt : setMemPoolChildren) {
         UpdateParent(updateIt, it, false);
     }
+
+    CollectStats();
 }
 
 void CTxMemPool::UpdateForRemoveFromMempool(const setEntries &entriesToRemove, bool updateDescendants)
@@ -306,6 +323,8 @@ void CTxMemPool::UpdateForRemoveFromMempool(const setEntries &entriesToRemove, b
     for (txiter removeIt : entriesToRemove) {
         UpdateChildrenForRemoval(removeIt);
     }
+
+    CollectStats();
 }
 
 void CTxMemPoolEntry::UpdateDescendantState(int64_t modifySize, CAmount modifyFee, int64_t modifyCount)
@@ -411,6 +430,8 @@ void CTxMemPool::addUnchecked(const uint256& hash, const CTxMemPoolEntry &entry,
 
     vTxHashes.emplace_back(tx.GetWitnessHash(), newit);
     newit->vTxHashesIdx = vTxHashes.size() - 1;
+
+    CollectStats();
 }
 
 void CTxMemPool::removeUnchecked(txiter it, MemPoolRemovalReason reason)
@@ -436,6 +457,8 @@ void CTxMemPool::removeUnchecked(txiter it, MemPoolRemovalReason reason)
     mapTx.erase(it);
     nTransactionsUpdated++;
     if (minerPolicyEstimator) {minerPolicyEstimator->removeTx(hash, false);}
+
+    CollectStats();
 }
 
 // Calculates descendants of entry that are not already in setDescendants, and adds to
@@ -497,6 +520,8 @@ void CTxMemPool::removeRecursive(const CTransaction &origTx, MemPoolRemovalReaso
 
         RemoveStaged(setAllRemoves, false, reason);
     }
+
+    CollectStats();
 }
 
 void CTxMemPool::removeForReorg(const CCoinsViewCache *pcoins, unsigned int nMemPoolHeight, int flags)
@@ -534,6 +559,8 @@ void CTxMemPool::removeForReorg(const CCoinsViewCache *pcoins, unsigned int nMem
         CalculateDescendants(it, setAllRemoves);
     }
     RemoveStaged(setAllRemoves, false, MemPoolRemovalReason::REORG);
+
+    CollectStats();
 }
 
 void CTxMemPool::removeConflicts(const CTransaction &tx)
@@ -551,6 +578,8 @@ void CTxMemPool::removeConflicts(const CTransaction &tx)
             }
         }
     }
+
+    CollectStats();
 }
 
 /**
@@ -601,6 +630,8 @@ void CTxMemPool::removeForBlock(const std::vector<CTransactionRef>& vtx, unsigne
 
     lastRollingFeeUpdate = GetTime();
     blockSinceLastRollingFeeBump = true;
+
+    CollectStats();
 }
 
 void CTxMemPool::_clear()
@@ -614,6 +645,8 @@ void CTxMemPool::_clear()
     blockSinceLastRollingFeeBump = false;
     rollingMinimumFeeRate = 0;
     ++nTransactionsUpdated;
+
+    CollectStats();
 }
 
 void CTxMemPool::clear()
@@ -1102,6 +1135,7 @@ void CTxMemPool::TrimToSize(size_t sizelimit, std::vector<COutPoint>* pvNoSpends
     if (maxFeeRateRemoved > CFeeRate(0)) {
         LogPrint(BCLog::MEMPOOL, "Removed %u txn, rolling minimum fee bumped to %s\n", nTxnRemoved, maxFeeRateRemoved.ToString());
     }
+    CollectStats();
 }
 
 uint64_t CTxMemPool::CalculateDescendantMaximum(txiter entry) const {

@@ -150,20 +150,22 @@ Result FinalizationState::InitializeEpoch(blockchain::Height blockHeight) {
 }
 
 void FinalizationState::InstaJustify() {
-  Checkpoint &cp = GetCheckpoint(m_current_epoch - 1);
-  cp.m_is_justified = true;
-  m_last_justified_epoch = m_current_epoch - 1;
+  LogPrint(BCLog::FINALIZATION, "%s: Skipping", __func__);
 
-  if (m_current_epoch > 1) {
-    uint32_t to_be_finalized = m_current_epoch - 2;
-    if (GetCheckpoint(to_be_finalized).m_is_justified) {
-      cp.m_is_finalized = true;
-      m_last_finalized_epoch = m_last_justified_epoch;
-    }
-  }
-
-  LogPrint(BCLog::FINALIZATION, "%s: Justified epoch=%d.\n", __func__,
-           m_last_justified_epoch);
+//  Checkpoint &cp = GetCheckpoint(m_current_epoch - 1);
+//  cp.m_is_justified = true;
+//  m_last_justified_epoch = m_current_epoch - 1;
+//
+//  if (m_current_epoch > 1) {
+//    uint32_t to_be_finalized = m_current_epoch - 2;
+//    if (GetCheckpoint(to_be_finalized).m_is_justified) {
+//      cp.m_is_finalized = true;
+//      m_last_finalized_epoch = m_last_justified_epoch;
+//    }
+//  }
+//
+//  LogPrint(BCLog::FINALIZATION, "%s: Justified epoch=%d.\n", __func__,
+//           m_last_justified_epoch);
 }
 
 void FinalizationState::IncrementDynasty() {

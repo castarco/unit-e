@@ -14,6 +14,7 @@
 #include <streams.h>
 #include <validation.h>
 
+#include <inttypes.h>
 #include <set>
 
 namespace staking {

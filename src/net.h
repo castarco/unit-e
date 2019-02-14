@@ -450,6 +450,8 @@ private:
     std::atomic<int64_t> m_next_send_inv_to_incoming{0};
 
     friend struct CConnmanTest;
+
+    void CollectPeersStats() const;
 };
 extern std::unique_ptr<CConnman> g_connman;
 void Discover();

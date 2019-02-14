@@ -64,7 +64,7 @@ Params FromJson(const std::string &json_string, finalization::Params p) {
 
 Params Params::RegTest(const bool gen_admin_keys) {
   Params p;
-  p.epoch_length = 5;
+  p.epoch_length = 50;
   p.min_deposit_size = 1500 * UNIT;
   p.dynasty_logout_delay = 2;
   p.withdrawal_epoch_delay = 5;

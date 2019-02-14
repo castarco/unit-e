@@ -19,6 +19,7 @@
 #include <util.h>
 #include <httpserver.h>
 #include <httprpc.h>
+#include <stats_logs/stats_collector.h>
 #include <utilstrencodings.h>
 #include <walletinitinterface.h>
 
@@ -49,6 +50,24 @@ static void WaitForShutdown()
         MilliSleep(200);
     }
     Interrupt();
+}
+
+void InitStatsCollector()
+{
+    assert(gArgs.IsArgSet("-stats-log-output-file"));
+    const std::string stats_logs_filename = gArgs.GetArg("-stats-log-output-file", "");
+    assert(!stats_logs_filename.empty());
+    const int64_t sampling_interval = gArgs.GetArg("-sampling-interval", 1000);
+    assert(0 < sampling_interval && sampling_interval < 60000);
+
+    LogPrintf("In InitStatsCollector, stats file: %s\n", stats_logs_filename);
+
+    // We don't need the result... for now
+    auto& stats_collector = stats_logs::StatsCollector::GetInstance(
+        std::move(stats_logs_filename),
+        static_cast<uint32_t>(sampling_interval)
+    );
+    stats_collector.StartSampling();
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -86,6 +105,9 @@ static bool AppInit(int argc, char* argv[])
         fprintf(stdout, "%s", strUsage.c_str());
         return true;
     }
+
+    // We init the stats collector as soon as we can
+    InitStatsCollector();
 
     try
     {

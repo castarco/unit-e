@@ -20,7 +20,7 @@
 namespace finalization {
 
 struct Params {
-  uint32_t epoch_length = 5;
+  uint32_t epoch_length = 50;
   CAmount min_deposit_size = 1500 * UNIT;
   int64_t dynasty_logout_delay = 2;
   int64_t withdrawal_epoch_delay = 5;

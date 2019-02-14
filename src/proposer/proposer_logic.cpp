@@ -61,8 +61,18 @@ class LogicImpl final : public Logic {
     const blockchain::Difficulty target_difficulty =
         m_blockchain_behavior->CalculateDifficulty(target_height, *m_active_chain);
 
+    uint32_t num_eligible_coins = 0;
+    uint64_t max_stake = 0;
+    uint256 best_kernel_hash;
     for (const staking::Coin &coin : eligible_coins) {
+      ++num_eligible_coins;
+
       const uint256 kernel_hash = m_stake_validator->ComputeKernelHash(current_tip, coin, target_time);
+
+      if (coin.GetAmount() > max_stake) {
+        max_stake = coin.GetAmount();
+        best_kernel_hash = kernel_hash;
+      }
 
       if (!m_stake_validator->CheckKernel(coin.GetAmount(), kernel_hash, target_difficulty)) {
         if (m_blockchain_behavior->GetParameters().mine_blocks_on_demand) {
@@ -80,6 +90,26 @@ class LogicImpl final : public Logic {
                target_time,
                target_difficulty}};
     }
+
+    {
+      arith_uint256 target_value;
+      bool is_negative;
+      bool is_overflow;
+      target_value.SetCompact(target_difficulty, &is_negative, &is_overflow);
+      const arith_uint256 weight(static_cast<uint64_t>(max_stake));
+      target_value *= weight;
+      auto const kernel_hash_num = UintToArith256(best_kernel_hash);
+
+      LogPrintf(
+        "Unable to propose, max_stake=%i, num_coins=%i, height=%i, difficulty=%i, (target=%s kernel=%s)\n",
+        max_stake, num_eligible_coins,
+        target_height,
+        target_difficulty,
+        target_value.ToString(),
+        kernel_hash_num.ToString()
+      );
+    }
+
     return boost::none;
   }
 };

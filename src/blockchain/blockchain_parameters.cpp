@@ -157,11 +157,14 @@ Parameters Parameters::RegTest() noexcept {
   p.network_name = "regtest";
 
   p.mine_blocks_on_demand = true;
-  p.coinbase_maturity = 1;
-  p.stake_maturity = 2;
-  p.stake_maturity_activation_height = 1000;
-  p.reward = 3750000000;
+  p.coinbase_maturity = 10;
+  p.stake_maturity = 100;
+  p.stake_maturity_activation_height = 200;
   p.initial_supply = 1060000 * UNIT;  // 1.06 million UTE
+  const int64_t expected_maximum_supply = 2718275 * UNIT;  // e million UTE
+  const int64_t avg_blocks_per_year = 60 * 60 * 24 * 365 / p.block_time_seconds;
+  const int64_t expected_emission_years = 50;
+  p.reward = (expected_maximum_supply - p.initial_supply) / (avg_blocks_per_year * expected_emission_years);
 
   p.message_start_characters[0] = 0xfa;
   p.message_start_characters[1] = 0xbf;
@@ -181,15 +184,18 @@ Parameters Parameters::RegTest() noexcept {
   p.default_settings.node_is_proposer = false;
   p.default_settings.stake_split_threshold = 1000 * UNIT;
   p.default_settings.p2p_port = 17292;
-  p.default_settings.finalizer_vote_from_epoch_block_number = 1;
+  p.default_settings.finalizer_vote_from_epoch_block_number = 35;
   p.data_dir_suffix = "regtest";
 
-  p.difficulty_adjustment_window = 0;
-  p.max_difficulty_value = uint256::zero;
-  p.difficulty_function = [](const Parameters &p, Height height, ChainAccess &chain) -> Difficulty {
-    const auto tip = chain.AtDepth(1);
-    return tip->nBits;
-  };
+  p.difficulty_adjustment_window = 128;
+  p.max_difficulty_value = uint256S("00000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // uint256::zero;
+
+
+  //  We keep the mainnet/testnet behavior for simulations
+  //  p.difficulty_function = [](const Parameters &p, Height height, ChainAccess &chain) -> Difficulty {
+  //    const auto tip = chain.AtDepth(1);
+  //    return tip->nBits;
+  //  };
 
   p.max_future_block_time_seconds = 2 * 60 * 60;
 
