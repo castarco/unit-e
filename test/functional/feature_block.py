@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 # Copyright (c) 2015-2018 The Bitcoin Core developers
+# Copyright (c) 2018-2019 The Unit-e developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Test block processing."""
 import copy
+import hashlib
 import struct
 import time
 
@@ -14,24 +16,23 @@ from test_framework.blocktools import (
     create_tx_with_script,
     get_legacy_sigopcount_block,
     get_tip_snapshot_meta,
-    sign_coinbase,
+    sign_coinbase
 )
 from test_framework.keytools import KeyTool
 from test_framework.messages import (
     CBlock,
-    UNIT,
-    UTXO,
     COutPoint,
     CTransaction,
     CTxIn,
     CTxOut,
     MAX_BLOCK_BASE_SIZE,
-    ser_vector,
-    sha256,
     uint256_from_compact,
     uint256_from_str,
+    UNIT,
+    UTXO
 )
 from test_framework.mininode import P2PDataStore
+from test_framework.regtest_mnemonics import regtest_mnemonics
 from test_framework.script import (
     CScript,
     MAX_SCRIPT_ELEMENT_SIZE,
@@ -54,7 +55,11 @@ from test_framework.script import (
     SignatureHash,
     hash160,
 )
-from test_framework.test_framework import UnitETestFramework, DISABLE_FINALIZATION
+from test_framework.test_framework import (
+    COINBASE_MATURITY,
+    DISABLE_FINALIZATION,
+    UnitETestFramework,
+)
 from test_framework.util import (
     assert_equal,
     get_unspent_coins,
@@ -64,8 +69,8 @@ from test_framework.util import (
 MAX_BLOCK_SIGOPS = 20000
 
 
-class PreviousSpendableOutput():
-    def __init__(self, tx = CTransaction(), n=-1, height=0):
+class PreviousSpendableOutput:
+    def __init__(self, tx=CTransaction(), n=-1, height=0):
         self.tx = tx
         self.n = n  # the output we're spending
         self.height = height  # at which height the tx was created
@@ -98,54 +103,53 @@ class CBrokenBlock(CBlock):
     def normal_serialize(self):
         return super().serialize()
 
+
 class FullBlockTest(UnitETestFramework):
     def set_test_params(self):
         self.num_nodes = 1
         self.setup_clean_chain = True
         self.extra_args = [['-whitelist=127.0.0.1', DISABLE_FINALIZATION]]
-        self.extra_args = [[]]
 
     def skip_test_if_missing_module(self):
         self.skip_if_no_wallet()
 
+    def setup_stake_coins(self, *args, rescan=True):
+        for i, node in enumerate(args):
+            node.mnemonics = regtest_mnemonics[i + 2]['mnemonics']
+            node.initial_stake = regtest_mnemonics[i + 2]['balance']
+            node.importmasterkey(node.mnemonics, "", rescan)
+
     def run_test(self):
 
-        # MIHAI: TODO: Uncomment and fix properly
-        return
-
         node = self.nodes[0]  # convenience reference to the node
-        self.setup_stake_coins(node)
 
         self.bootstrap_p2p()  # Add one p2p connection to the node
 
         self.block_heights = {}
+        self.blocks_by_hash = {}
+
+        self.keytool = KeyTool.for_node(node)
+        self.coinbase_key = self.keytool.make_privkey(data=hashlib.sha256(b"horsebattery").digest())
+        self.coinbase_pubkey = bytes(self.coinbase_key.get_pubkey())
+        self.keytool.upload_key(self.coinbase_key)
+
         self.block_snapshot_meta = {}  # key(block_hash) : value(SnapshotMeta)
         self.tip = None
         self.blocks = {}
-        self.blocks_by_hash = {}
         self.genesis_hash = int(self.nodes[0].getbestblockhash(), 16)
         self.block_heights[self.genesis_hash] = 0
         self.spendable_outputs = []
-        self.keytool = KeyTool.for_node(self.nodes[0])
-
-        self.coinbase_key = self.keytool.make_privkey(data=sha256(b"horsebattery"))
-        self.coinbase_pubkey = bytes(self.coinbase_key.get_pubkey())
-        self.keytool.upload_key(self.coinbase_key)
+        self.setup_stake_coins(node)
 
         coin = get_unspent_coins(self.nodes[0], 1)[0]
 
         # Create a new block
         b0 = self.next_block(0, coin, coinbase_pieces=200)
-
         self.save_spendable_output()
         self.sync_blocks([b0])
 
-        # Allow the block to mature
-        blocks = []
-        for i in range(99):
-            blocks.append(self.next_block(5000 + i, self.get_staking_coin()))
-            self.save_spendable_output()
-        self.sync_blocks(blocks)
+        # Update snapshot meta as genesis output was not taken into account
+        self.block_snapshot_meta[self.tip.sha256] = get_tip_snapshot_meta(self.nodes[0])
 
         # collect spendable outputs now to avoid cluttering the code later on
         out = []
@@ -157,13 +161,11 @@ class FullBlockTest(UnitETestFramework):
         #     genesis -> b1 (0) -> b2 (1)
         b1 = self.next_block(1, self.get_staking_coin(), spend=out[0])
         self.save_spendable_output()
-        self.comp_snapshot_hash(1)
 
         b2 = self.next_block(2, self.get_staking_coin(), spend=out[1])
         self.save_spendable_output()
-        self.comp_snapshot_hash(2)
-
         self.sync_blocks([b1, b2])
+        self.comp_snapshot_hash(2)
 
         # Fork like this:
         #
@@ -174,7 +176,7 @@ class FullBlockTest(UnitETestFramework):
         self.log.info("Don't reorg to a chain of the same length")
         self.move_tip(1)
         b3 = self.next_block(3, self.get_staking_coin(), spend=out[1])
-        txout_b3 = b3.vtx[1]
+        txout_b3 = PreviousSpendableOutput(b3.vtx[1], 0)
         self.sync_blocks([b3], False)  # b3 is not really rejected, just not chosen as tip.
         self.comp_snapshot_hash(2)
 
@@ -185,13 +187,13 @@ class FullBlockTest(UnitETestFramework):
         self.log.info("Reorg to a longer chain")
         b4 = self.next_block(4, self.get_staking_coin(), spend=out[2])
         self.sync_blocks([b4])
-        self.comp_snapshot_hash(2)
+        self.comp_snapshot_hash(4)
 
         # ... and back to the first chain.
         #     genesis -> b1 (0) -> b2 (1) -> b5 (2) -> b6 (3)
         #                      \-> b3 (1) -> b4 (2)
         self.move_tip(2)
-        b5 = self.next_block(5, self.get_staking_coin(), self.get_staking_coin(), spend=out[2])
+        b5 = self.next_block(5, self.get_staking_coin(), spend=out[2])
         self.save_spendable_output()
         self.sync_blocks([b5], False)
         self.comp_snapshot_hash(4)
@@ -231,12 +233,12 @@ class FullBlockTest(UnitETestFramework):
         #                      \-> b3 (1) -> b4 (2)
         self.log.info("Reject a chain where the miner creates too much coinbase reward, even if the chain is longer")
         self.move_tip(5)
-        b10 = self.next_block(10, self.get_staking_coin(), spend=out[3])
+        b10 = self.next_block(10, spend=out[3])
         self.sync_blocks([b10], False)
-        self.comp_snapshot_hash(6)
 
-        b11 = self.next_block(11, self.get_staking_coin(), spend=out[4], additional_coinbase_value=1)
+        b11 = self.next_block(11, spend=out[4], additional_coinbase_value=1)
         self.sync_blocks([b11], success=False, reject_code=16, reject_reason=b'bad-cb-amount', reconnect=True)
+        self.comp_snapshot_hash(6)
 
         # Try again, but with a valid fork first
         #     genesis -> b1 (0) -> b2 (1) -> b5 (2) -> b6  (3)
@@ -244,13 +246,12 @@ class FullBlockTest(UnitETestFramework):
         #                      \-> b3 (1) -> b4 (2)
         self.log.info("Reject a chain where the miner creates too much coinbase reward, even if the chain is longer (on a forked chain)")
         self.move_tip(5)
-        b12 = self.next_block(12, self.get_staking_coin(), spend=out[3])
+        b12 = self.next_block(12, spend=out[3])
         self.save_spendable_output()
-        b13 = self.next_block(13, self.get_staking_coin(), spend=out[4])
+        b13 = self.next_block(13, spend=out[4])
         self.save_spendable_output()
         b14 = self.next_block(14, spend=out[5], additional_coinbase_value=1)
         self.sync_blocks([b12, b13, b14], success=False, reject_code=16, reject_reason=b'bad-cb-amount', reconnect=True)
-        self.comp_snapshot_hash(6)
 
         # New tip should be b13.
         assert_equal(node.getbestblockhash(), b13.hash)
@@ -261,14 +262,14 @@ class FullBlockTest(UnitETestFramework):
         #                                          \-> b12 (3) -> b13 (4) -> b15 (5) -> b16 (6)
         #                      \-> b3 (1) -> b4 (2)
         self.log.info("Accept a block with lots of checksigs")
-        lots_of_checksigs = CScript([OP_CHECKSIG] * (MAX_BLOCK_SIGOPS - 1))
+        lots_of_checksigs = CScript([OP_CHECKSIG] * (MAX_BLOCK_SIGOPS - 2))
         self.move_tip(13)
         b15 = self.next_block(15, spend=out[5], script=lots_of_checksigs)
         self.save_spendable_output()
         self.sync_blocks([b15], True)
 
         self.log.info("Reject a block with too many checksigs")
-        too_many_checksigs = CScript([OP_CHECKSIG] * (MAX_BLOCK_SIGOPS))
+        too_many_checksigs = CScript([OP_CHECKSIG] * (MAX_BLOCK_SIGOPS - 1))
         b16 = self.next_block(16, spend=out[6], script=too_many_checksigs)
         self.sync_blocks([b16], success=False, reject_code=16, reject_reason=b'bad-blk-sigops', reconnect=True)
 
@@ -278,7 +279,7 @@ class FullBlockTest(UnitETestFramework):
         #                      \-> b3 (1) -> b4 (2)
         self.log.info("Reject a block with a spend from a re-org'ed out tx")
         self.move_tip(15)
-        b17 = self.next_block(17, self.get_staking_coin(), spend=txout_b3)
+        b17 = self.next_block(17, spend=txout_b3)
         self.sync_blocks([b17], success=False, reject_code=16, reject_reason=b'bad-txns-inputs-missingorspent', reconnect=True)
         self.comp_snapshot_hash(15)
 
@@ -289,11 +290,11 @@ class FullBlockTest(UnitETestFramework):
         #                      \-> b3 (1) -> b4 (2)
         self.log.info("Reject a block with a spend from a re-org'ed out tx (on a forked chain)")
         self.move_tip(13)
-        b18 = self.next_block(18, self.get_staking_coin(), spend=txout_b3)
+        b18 = self.next_block(18, spend=txout_b3)
         self.sync_blocks([b18], False)
         self.comp_snapshot_hash(15)
 
-        b19 = self.next_block(19, self.get_staking_coin(), spend=out[6])
+        b19 = self.next_block(19, spend=out[6])
         self.sync_blocks([b19], success=False, reject_code=16, reject_reason=b'bad-txns-inputs-missingorspent', reconnect=True)
         self.comp_snapshot_hash(15)
 
@@ -304,7 +305,12 @@ class FullBlockTest(UnitETestFramework):
         self.log.info("Reject a block spending an immature coinbase.")
         self.move_tip(15)
         b20 = self.next_block(20, spend=out[7])
-        self.sync_blocks([b20], success=False, reject_code=16, reject_reason=b'bad-txns-premature-spend-of-coinbase')
+        # UNIT-E: The first 100 blocks are by definition mature such that the system can
+        # be bootstrapped. At this point in the test the blocks do not have an adequate height
+        # yet as that we could not spend a transaction. Thus we changed from
+        # rejected(RejectResult(16, b'bad-txns-premature-spend-of-coinbase-reward')) to accepted() here.
+        self.sync_blocks([b20], success=True)
+        self.comp_snapshot_hash(20)
         self.comp_snapshot_hash(20)
 
         # Attempt to spend a coinbase at depth too low (on a fork this time)
@@ -319,7 +325,7 @@ class FullBlockTest(UnitETestFramework):
         self.comp_snapshot_hash(20)
 
         b22 = self.next_block(22, spend=out[5])
-        self.sync_blocks([b22], success=False, reject_code=16, reject_reason=b'bad-txns-premature-spend-of-coinbase')
+        self.sync_blocks([b22], success=False)
         self.comp_snapshot_hash(20)
 
         # Create a block on either side of MAX_BLOCK_BASE_SIZE and make sure its accepted/rejected
@@ -328,8 +334,8 @@ class FullBlockTest(UnitETestFramework):
         #                                                                           \-> b24 (6) -> b25 (7)
         #                      \-> b3 (1) -> b4 (2)
         self.log.info("Accept a block of size MAX_BLOCK_BASE_SIZE")
-        self.move_tip(20)
-        b23 = self.next_block(23, self.get_staking_coin(), spend=out[6])
+        self.move_tip(15)
+        b23 = self.next_block(23, spend=out[6])
         tx = CTransaction()
         script_length = MAX_BLOCK_BASE_SIZE - len(b23.serialize()) - 69
         script_output = CScript([b'\x00' * script_length])
@@ -344,7 +350,7 @@ class FullBlockTest(UnitETestFramework):
 
         self.log.info("Reject a block of size MAX_BLOCK_BASE_SIZE + 1")
         self.move_tip(15)
-        b24 = self.next_block(24, self.get_staking_coin(), spend=out[6])
+        b24 = self.next_block(24, spend=out[6])
         script_length = MAX_BLOCK_BASE_SIZE - len(b24.serialize()) - 69
         script_output = CScript([b'\x00' * (script_length + 1)])
         tx.vout = [CTxOut(0, script_output)]
@@ -353,18 +359,18 @@ class FullBlockTest(UnitETestFramework):
         self.sync_blocks([b24], success=False, reject_code=16, reject_reason=b'bad-blk-length', reconnect=True)
         self.comp_snapshot_hash(23)
 
-        b25 = self.next_block(25, self.get_staking_coin(), spend=out[7])
+        b25 = self.next_block(25, spend=out[7])
         self.sync_blocks([b25], False)
         self.comp_snapshot_hash(23)
 
         # Create blocks with a coinbase input script size out of range
         #     genesis -> b1 (0) -> b2 (1) -> b5 (2) -> b6  (3)
-        #                                          \-> b12 (3) -> b13 (4) -> b15 (5) -> b23 (6) -> b30 (7)
+        #                                          \-> b12 (3) -> b13 (4) -> b15 (5) -> b20 (7) -> b23 (6) -> b30 (7)
         #                                                                           \-> ... (6) -> ... (7)
         #                      \-> b3 (1) -> b4 (2)
         self.log.info("Reject a block with coinbase input script size out of range")
         self.move_tip(15)
-        b26 = self.next_block(26, self.get_staking_coin(), spend=out[6])
+        b26 = self.next_block(26, spend=out[6])
         b26.vtx[0].vin[0].scriptSig = b'\x00'
         b26.vtx[0].rehash()
         # update_block causes the merkle root to get updated, even with no new
@@ -374,13 +380,13 @@ class FullBlockTest(UnitETestFramework):
         self.comp_snapshot_hash(23)
 
         # Extend the b26 chain to make sure unit-e isn't accepting b26
-        b27 = self.next_block(27, self.get_staking_coin(), spend=out[7])
+        b27 = self.next_block(27, spend=out[7])
         self.sync_blocks([b27], False)
         self.comp_snapshot_hash(23)
 
         # Now try a too-large-coinbase script
         self.move_tip(15)
-        b28 = self.next_block(28, self.get_staking_coin(), spend=out[6])
+        b28 = self.next_block(28, spend=out[6])
         b28.vtx[0].vin[0].scriptSig = b'\x00' * 101
         b28.vtx[0].rehash()
         b28 = self.update_block(28, [])
@@ -388,13 +394,13 @@ class FullBlockTest(UnitETestFramework):
         self.comp_snapshot_hash(23)
 
         # Extend the b28 chain to make sure unit-e isn't accepting b28
-        b29 = self.next_block(29, self.get_staking_coin(), spend=out[7])
+        b29 = self.next_block(29, spend=out[7])
         self.sync_blocks([b29], False)
         self.comp_snapshot_hash(23)
 
         # b30 has a max-sized coinbase scriptSig.
         self.move_tip(23)
-        b30 = self.next_block(30, self.get_staking_coin())
+        b30 = self.next_block(30)
         b30.vtx[0].vin[0].scriptSig += b'\x00' * (100 - len(b30.vtx[0].vin[0].scriptSig))
         assert_equal(len(b30.vtx[0].vin[0].scriptSig), 100)
         b30.vtx[0].rehash()
@@ -413,8 +419,8 @@ class FullBlockTest(UnitETestFramework):
 
         # MULTISIG: each op code counts as 20 sigops.  To create the edge case, pack another 19 sigops at the end.
         self.log.info("Accept a block with the max number of OP_CHECKMULTISIG sigops")
-        lots_of_multisigs = CScript([OP_CHECKMULTISIG] * ((MAX_BLOCK_SIGOPS - 1) // 20) + [OP_CHECKSIG] * 18)
-        b31 = self.next_block(31, self.get_staking_coin(), spend=out[8], script=lots_of_multisigs)
+        lots_of_multisigs = CScript([OP_CHECKMULTISIG] * ((MAX_BLOCK_SIGOPS - 1) // 20) + [OP_CHECKSIG] * 19)
+        b31 = self.next_block(31, spend=out[8], script=lots_of_multisigs)
         assert_equal(get_legacy_sigopcount_block(b31), MAX_BLOCK_SIGOPS)
         self.sync_blocks([b31], True)
         self.save_spendable_output()
@@ -422,16 +428,16 @@ class FullBlockTest(UnitETestFramework):
 
         # this goes over the limit because the coinbase has one sigop
         self.log.info("Reject a block with too many OP_CHECKMULTISIG sigops")
-        too_many_multisigs = CScript([OP_CHECKMULTISIG] * ((MAX_BLOCK_SIGOPS - 1) // 20) + [OP_CHECKSIG] * 19)
-        b32 = self.next_block(32, self.get_staking_coin(), spend=out[9], script=too_many_multisigs)
+        too_many_multisigs = CScript([OP_CHECKMULTISIG] * (MAX_BLOCK_SIGOPS // 20))
+        b32 = self.next_block(32, spend=out[9], script=too_many_multisigs)
         assert_equal(get_legacy_sigopcount_block(b32), MAX_BLOCK_SIGOPS + 1)
         self.sync_blocks([b32], success=False, reject_code=16, reject_reason=b'bad-blk-sigops', reconnect=True)
 
         # CHECKMULTISIGVERIFY
         self.log.info("Accept a block with the max number of OP_CHECKMULTISIGVERIFY sigops")
         self.move_tip(31)
-        lots_of_multisigs = CScript([OP_CHECKMULTISIGVERIFY] * ((MAX_BLOCK_SIGOPS - 1) // 20) + [OP_CHECKSIG] * 18)
-        b33 = self.next_block(33, self.get_staking_coin(), spend=out[9], script=lots_of_multisigs)
+        lots_of_multisigs = CScript([OP_CHECKMULTISIGVERIFY] * ((MAX_BLOCK_SIGOPS - 1) // 20) + [OP_CHECKSIG] * 19)
+        b33 = self.next_block(33, spend=out[9], script=lots_of_multisigs)
         self.sync_blocks([b33], True)
         self.save_spendable_output()
         self.comp_snapshot_hash(33)
@@ -444,8 +450,8 @@ class FullBlockTest(UnitETestFramework):
         # CHECKSIGVERIFY
         self.log.info("Accept a block with the max number of OP_CHECKSIGVERIFY sigops")
         self.move_tip(33)
-        lots_of_checksigs = CScript([OP_CHECKSIGVERIFY] * (MAX_BLOCK_SIGOPS - 2))
-        b35 = self.next_block(35, self.get_staking_coin(), spend=out[10], script=lots_of_checksigs)
+        lots_of_checksigs = CScript([OP_CHECKSIGVERIFY] * (MAX_BLOCK_SIGOPS - 1))
+        b35 = self.next_block(35, spend=out[10], script=lots_of_checksigs)
         self.sync_blocks([b35], True)
         self.save_spendable_output()
         self.comp_snapshot_hash(35)
@@ -454,7 +460,6 @@ class FullBlockTest(UnitETestFramework):
         too_many_checksigs = CScript([OP_CHECKSIGVERIFY] * (MAX_BLOCK_SIGOPS))
         b36 = self.next_block(36, spend=out[11], script=too_many_checksigs)
         self.sync_blocks([b36], success=False, reject_code=16, reject_reason=b'bad-blk-sigops', reconnect=True)
-
 
         # Check spending of a transaction in a block which failed to connect
         #
@@ -465,16 +470,17 @@ class FullBlockTest(UnitETestFramework):
         #
 
         # save 37's spendable output, but then double-spend out11 to invalidate the block
+        self.log.info("Reject a block spending transaction from a block which failed to connect")
         self.move_tip(35)
         b37 = self.next_block(37, spend=out[11])
         txout_b37 = PreviousSpendableOutput(b37.vtx[1], 0)
         tx = self.create_and_sign_transaction(out[11].tx, out[11].n, 0)
         b37 = self.update_block(37, [tx])
-        self.sync_blocks([b37], success=False, reject_code=16, reject_reason=b'bad-txns-inputs-missingorspent')
+        self.sync_blocks([b37], success=False, reject_code=16, reject_reason=b'bad-txns-inputs-missingorspent', reconnect=True)
 
         # attempt to spend b37's first non-coinbase tx, at which point b37 was still considered valid
         self.move_tip(35)
-        b38 = self.next_block(38, self.get_staking_coin(), spend=txout_b37)
+        b38 = self.next_block(38, spend=txout_b37)
         self.sync_blocks([b38], success=False, reject_code=16, reject_reason=b'bad-txns-inputs-missingorspent', reconnect=True)
         self.comp_snapshot_hash(35)
 
@@ -491,7 +497,7 @@ class FullBlockTest(UnitETestFramework):
         #
         self.log.info("Check P2SH SIGOPS are correctly counted")
         self.move_tip(35)
-        b39 = self.next_block(39, self.get_staking_coin())
+        b39 = self.next_block(39)
         b39_outputs = 0
         b39_sigops_per_output = 6
 
@@ -539,7 +545,7 @@ class FullBlockTest(UnitETestFramework):
         #
         self.log.info("Reject a block with too many P2SH sigops")
         self.move_tip(39)
-        b40 = self.next_block(40, self.get_staking_coin(), spend=out[12])
+        b40 = self.next_block(40, spend=out[12])
         sigops = get_legacy_sigopcount_block(b40)
         numTxes = (MAX_BLOCK_SIGOPS - sigops) // b39_sigops_per_output
         assert_equal(numTxes <= b39_outputs, True)
@@ -594,7 +600,7 @@ class FullBlockTest(UnitETestFramework):
         #                                                                 \-> b41 (12)
         #
         self.move_tip(39)
-        b42 = self.next_block(42, self.get_staking_coin(), spend=out[12])
+        b42 = self.next_block(42, spend=out[12])
         self.save_spendable_output()
         self.comp_snapshot_hash(41)
 
@@ -670,7 +676,7 @@ class FullBlockTest(UnitETestFramework):
 
         self.log.info("Reject a block with a timestamp >2 hours in the future")
         self.move_tip(44)
-        b48 = self.next_block(48, self.get_staking_coin(), solve=False)
+        b48 = self.next_block(48, solve=False)
         b48.nTime = int(time.time()) + 60 * 60 * 3
         b48.solve()
         self.sync_blocks([b48], False, request_block=False)
@@ -678,7 +684,7 @@ class FullBlockTest(UnitETestFramework):
 
         self.log.info("Reject a block with invalid merkle hash")
         self.move_tip(44)
-        b49 = self.next_block(49, self.get_staking_coin())
+        b49 = self.next_block(49)
         b49.hashMerkleRoot += 1
         b49.solve()
         self.sync_blocks([b49], success=False, reject_code=16, reject_reason=b'bad-txnmrklroot', reconnect=True)
@@ -823,6 +829,7 @@ class FullBlockTest(UnitETestFramework):
         self.move_tip(57)
         b58 = self.next_block(58, self.get_staking_coin(), spend=out[17])
         tx = CTransaction()
+        assert(len(out[17].vout) < 42)
         tx.vin.append(CTxIn(COutPoint(out[17].sha256, 42), CScript([OP_TRUE]), 0xffffffff))
         tx.vout.append(CTxOut(0, b""))
         tx.calc_sha256()
@@ -1434,8 +1441,9 @@ class FullBlockTest(UnitETestFramework):
         new_meta = calc_snapshot_hash(self.nodes[0], prev_meta, block_height, inputs, outputs, block.vtx[0] if block.vtx else None)
         self.block_snapshot_meta[block.sha256] = new_meta
 
-
-    def next_block(self, number, coin, spend=None, additional_coinbase_value=0, script=CScript([OP_TRUE]), solve=True, coinbase_pieces=1, sign_stake=True, sign_spend=True):
+    def next_block(self, number, coin=None, spend=None, additional_coinbase_value=0, script=CScript([OP_TRUE]), solve=True, coinbase_pieces=1, sign_stake=True, sign_spend=True):
+        if coin is None:
+            coin = self.get_staking_coin()
         if self.tip is None:
             base_block_hash = self.genesis_hash
             block_time = int(time.time())+1
@@ -1447,13 +1455,12 @@ class FullBlockTest(UnitETestFramework):
             meta = get_tip_snapshot_meta(self.nodes[0])
             self.block_snapshot_meta[base_block_hash] = meta
 
-        # First create the coinbase
         height = self.block_heights[base_block_hash] + 1
         snapshot_hash = self.block_snapshot_meta[base_block_hash].hash
 
+        # First create the coinbase
         coinbase = create_coinbase(height, coin, snapshot_hash, self.coinbase_pubkey, n_pieces=coinbase_pieces)
         coinbase.vout[0].nValue += additional_coinbase_value
-
         if sign_stake:
             coinbase = sign_coinbase(self.nodes[0], coinbase)
             for out in coinbase.vout:
@@ -1515,8 +1522,8 @@ class FullBlockTest(UnitETestFramework):
 
     # get a spendable output as staking coin
     def get_staking_coin(self):
-        tx = self.get_spendable_output()
-        return {'txid': tx.hash, 'vout': 0, 'amount': tx.vout[0].nValue / UNIT}
+        coin = self.get_spendable_output()
+        return {'txid': coin.tx.hash, 'vout': coin.n, 'amount': coin.tx.vout[coin.n].nValue / UNIT}
 
     # move the tip back to a previous block
     def move_tip(self, number):
