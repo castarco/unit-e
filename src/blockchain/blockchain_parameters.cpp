@@ -156,7 +156,7 @@ Parameters Parameters::RegTest() noexcept {
   Parameters p = Parameters::Base();
   p.network_name = "regtest";
 
-  p.mine_blocks_on_demand = true;
+  p.mine_blocks_on_demand = false;
   p.coinbase_maturity = 10;
   p.stake_maturity = 100;
   p.stake_maturity_activation_height = 200;
