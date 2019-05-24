@@ -7,6 +7,7 @@
 #include <chainparams.h>
 #include <esperanza/script.h>
 #include <esperanza/vote.h>
+#include <stats_logs/stats_collector.h>
 #include <tinyformat.h>
 #include <ufp64.h>
 #include <util.h>
@@ -146,26 +147,26 @@ Result FinalizationState::InitializeEpoch(blockchain::Height blockHeight) {
            m_last_justified_epoch,
            m_last_finalized_epoch);
 
+  CollectStats();
   return success();
 }
 
 void FinalizationState::InstaJustify() {
-  LogPrint(BCLog::FINALIZATION, "%s: Skipping", __func__);
+  Checkpoint &cp = GetCheckpoint(m_current_epoch - 1);
+  cp.m_is_justified = true;
+  m_last_justified_epoch = m_current_epoch - 1;
 
-//  Checkpoint &cp = GetCheckpoint(m_current_epoch - 1);
-//  cp.m_is_justified = true;
-//  m_last_justified_epoch = m_current_epoch - 1;
-//
-//  if (m_current_epoch > 1) {
-//    uint32_t to_be_finalized = m_current_epoch - 2;
-//    if (GetCheckpoint(to_be_finalized).m_is_justified) {
-//      cp.m_is_finalized = true;
-//      m_last_finalized_epoch = m_last_justified_epoch;
-//    }
-//  }
-//
-//  LogPrint(BCLog::FINALIZATION, "%s: Justified epoch=%d.\n", __func__,
-//           m_last_justified_epoch);
+  if (m_current_epoch > 1) {
+    uint32_t to_be_finalized = m_current_epoch - 2;
+    if (GetCheckpoint(to_be_finalized).m_is_justified) {
+      cp.m_is_finalized = true;
+      m_last_finalized_epoch = m_last_justified_epoch;
+    }
+  }
+
+  CollectStats();
+  LogPrint(BCLog::FINALIZATION, "%s: Justified epoch=%d.\n", __func__,
+           m_last_justified_epoch);
 }
 
 void FinalizationState::IncrementDynasty() {
@@ -193,6 +194,7 @@ void FinalizationState::IncrementDynasty() {
     }
   }
 
+  CollectStats();
   LogPrint(BCLog::FINALIZATION, "%s: New current dynasty=%d\n", __func__,
            m_current_dynasty);
 }
@@ -561,6 +563,7 @@ void FinalizationState::ProcessVote(const Vote &vote) {
 }
 
 uint32_t FinalizationState::GetEndDynasty() const {
+  CollectStats();
   return m_current_dynasty + m_settings.dynasty_logout_delay;
 }
 
@@ -1000,6 +1003,7 @@ void FinalizationState::ProcessNewTip(const CBlockIndex &block_index,
   assert(m_status == NEW);
   ProcessNewCommits(block_index, block.vtx);
   m_status = COMPLETED;
+  CollectStats();
 }
 
 void FinalizationState::ProcessNewCommits(const CBlockIndex &block_index,
@@ -1115,6 +1119,14 @@ uint32_t FinalizationState::GetCurrentDynastyEpochStart() const {
   const auto &it = m_dynasty_start_epoch.find(m_current_dynasty);
   assert(it != m_dynasty_start_epoch.end());
   return it->second;
+}
+
+void FinalizationState::CollectStats() const {
+  auto& stats_collector = stats_logs::StatsCollector::GetInstance();
+  stats_collector.SetLastJustifiedEpoch(GetLastJustifiedEpoch());
+  stats_collector.SetLastFinalizedEpoch(GetLastFinalizedEpoch());
+  stats_collector.SetCurrentEpoch(GetCurrentEpoch());
+  stats_collector.SetCurrentDinasty(GetCurrentDynasty());
 }
 
 }  // namespace esperanza

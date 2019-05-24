@@ -21,81 +21,96 @@ enum StatsCollectorStates { PENDING, STARTING, SAMPLING, CLOSING, CLOSED };
 
 
 class StatsCollector final {
-   private:
-       // Global state
-       static std::atomic_bool created_global_instance;
+  private:
+    // Global state
+    static std::atomic_bool m_created_global_instance;
 
-       // Stats Collector settings
-       std::string output_filename;
-       uint32_t sampling_interval;
+    // Stats Collector settings
+    std::string m_output_filename;
+    uint32_t m_sampling_interval;
 
-       // State Machine
-       StatsCollectorStates state;
+    // State Machine
+    StatsCollectorStates m_state;
 
-       // Collected metrics
-       uint32_t height;
-       uint32_t mempool_num_transactions;
-       uint64_t mempool_used_memory;
-       uint16_t tip_stats_active;
-       uint16_t tip_stats_valid_fork;
-       uint16_t tip_stats_valid_header;
-       uint16_t tip_stats_headers_only;
-       uint16_t tip_stats_invalid;
-       uint16_t peers_num_inbound;
-       uint16_t peers_num_outbound;
+    // Collected metrics
+    uint32_t m_height;
+    uint32_t m_last_justified_epoch;
+    uint32_t m_last_finalized_epoch;
+    uint32_t m_current_epoch;
+    uint32_t m_current_dinasty;
 
-       // Other resources
-       std::ofstream output_file;
-       std::thread sampling_thread;
+    uint32_t m_mempool_num_transactions;
+    uint64_t m_mempool_used_memory;
 
-       // Internal methods
-       void SampleForever();
-       void Sample();
-   public:
-       // Singleton-like accessor
-       static StatsCollector& GetInstance();
-       static StatsCollector& GetInstance(
-           std::string output_filename,
-           uint32_t sampling_interval
-       );
+    uint16_t m_tip_stats_active;
+    uint16_t m_tip_stats_valid_fork;
+    uint16_t m_tip_stats_valid_header;
+    uint16_t m_tip_stats_headers_only;
+    uint16_t m_tip_stats_invalid;
 
-       // Boilerplate:
-       StatsCollector(
-           std::string output_filename,
-           uint32_t sampling_interval
-       ):
-           output_filename(output_filename),
-           sampling_interval(sampling_interval),
-           state(StatsCollectorStates::PENDING),
-           height(0),
-           mempool_num_transactions(0),
-           mempool_used_memory(0),
-           tip_stats_active(0),
-           tip_stats_valid_fork(0),
-           tip_stats_valid_header(0),
-           tip_stats_headers_only(0),
-           tip_stats_invalid(0),
-           peers_num_inbound(0),
-           peers_num_outbound(0) {};
+    uint16_t m_peers_num_inbound;
+    uint16_t m_peers_num_outbound;
 
-       ~StatsCollector();
+    // Other resources
+    std::ofstream output_file;
+    std::thread sampling_thread;
 
-       // Lifecycle:
-       //! \brief Starts a thread that periodically writes samples to a CSV file.
-       void StartSampling();
-       //! \brief Stops the sampling thread and closes used resources.
-       void StopSampling();
+    // Internal methods
+    void SampleForever();
+    void Sample();
+  public:
+    // Singleton-like accessor
+    static StatsCollector& GetInstance();
+    static StatsCollector& GetInstance(
+       std::string output_filename,
+       uint32_t sampling_interval
+    );
 
-       // Data collection:
-       void SetHeight(uint32_t value);
-       void SetMempoolNumTransactions(uint32_t value);
-       void SetMempoolUsedMemory(uint64_t value);
-       void SetTipStatsActive(uint16_t value);
-       void SetTipStatsValidFork(uint16_t value);
-       void SetTipStatsValidHeader(uint16_t value);
-       void SetTipStatsHeadersOnly(uint16_t value);
-       void SetTipStatsInvalid(uint16_t value);
-       void SetPeersStats(uint16_t num_inbound, uint16_t num_outbound);
+    // Boilerplate:
+    StatsCollector(
+      std::string output_filename,
+      uint32_t sampling_interval
+    ):
+      m_output_filename(output_filename),
+      m_sampling_interval(sampling_interval),
+      m_state(StatsCollectorStates::PENDING),
+      m_height(0),
+      m_last_justified_epoch(0),
+      m_last_finalized_epoch(0),
+      m_current_epoch(0),
+      m_current_dinasty(0),
+      m_mempool_num_transactions(0),
+      m_mempool_used_memory(0),
+      m_tip_stats_active(0),
+      m_tip_stats_valid_fork(0),
+      m_tip_stats_valid_header(0),
+      m_tip_stats_headers_only(0),
+      m_tip_stats_invalid(0),
+      m_peers_num_inbound(0),
+      m_peers_num_outbound(0) {};
+
+    ~StatsCollector();
+
+    // Lifecycle:
+    //! \brief Starts a thread that periodically writes samples to a CSV file.
+    void StartSampling();
+    //! \brief Stops the sampling thread and closes used resources.
+    void StopSampling();
+
+    // Data collection:
+    void SetHeight(uint32_t value);
+    void SetLastJustifiedEpoch(uint32_t value);
+    void SetLastFinalizedEpoch(uint32_t value);
+    void SetCurrentEpoch(uint32_t value);
+    void SetCurrentDinasty(uint32_t value);
+    void SetMempoolNumTransactions(uint32_t value);
+    void SetMempoolUsedMemory(uint64_t value);
+    void SetTipStatsActive(uint16_t value);
+    void SetTipStatsValidFork(uint16_t value);
+    void SetTipStatsValidHeader(uint16_t value);
+    void SetTipStatsHeadersOnly(uint16_t value);
+    void SetTipStatsInvalid(uint16_t value);
+    void SetPeersStats(uint16_t num_inbound, uint16_t num_outbound);
 };
 
 

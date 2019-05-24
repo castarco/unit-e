@@ -11,139 +11,159 @@
 namespace stats_logs {
 
 // Used in GetInstance methods
-std::atomic_bool StatsCollector::created_global_instance(false);
+std::atomic_bool StatsCollector::m_created_global_instance(false);
 
 //! WARNING: Don't call this class method before calling its parametrized version!
 StatsCollector& StatsCollector::GetInstance() {
-    if (!StatsCollector::created_global_instance.load()) {
-        // Trick to avoid creating a not usable StatsCollector global instance.
-        static StatsCollector dummy("", 1000);
-        return dummy;
-    }
-    // The parameters don't have effect since we got back a static variable
-    return StatsCollector::GetInstance("", 1000);
+  if (!StatsCollector::m_created_global_instance.load()) {
+    // Trick to avoid creating a not usable StatsCollector global instance.
+    static StatsCollector dummy("", 1000);
+    return dummy;
+  }
+  // The parameters don't have effect since we got back a static variable
+  return StatsCollector::GetInstance("", 1000);
 }
 
 //! Be aware that there will be a unique instance, even if we call the function
 //! with different parameters. Better call it just once.
 StatsCollector& StatsCollector::GetInstance(
-    std::string output_filename,
-    uint32_t sampling_interval
+  std::string output_filename,
+  uint32_t sampling_interval
 ) {
-    static StatsCollector instance(std::move(output_filename), sampling_interval);
+  static StatsCollector instance(std::move(output_filename), sampling_interval);
 
-    StatsCollector::created_global_instance.store(true);
-    return instance;
+  StatsCollector::m_created_global_instance.store(true);
+  return instance;
 }
 
 StatsCollector::~StatsCollector() {
-    StopSampling();
+  StopSampling();
 }
 
 void StatsCollector::StartSampling() {
-    if (StatsCollectorStates::PENDING != state) {
-        return;  // We start sampling just once
-    }
-    state = StatsCollectorStates::STARTING;
+  if (StatsCollectorStates::PENDING != m_state) {
+    return;  // We start sampling just once
+  }
+  m_state = StatsCollectorStates::STARTING;
 
-    output_file.open(output_filename);
-    assert(output_file.good());
-    LogPrintf("Opened StatsCollector output file (%s)\n", output_filename);
+  output_file.open(m_output_filename);
+  assert(output_file.good());
+  LogPrintf("Opened StatsCollector output file (%s)\n", m_output_filename);
 
-    sampling_thread = std::thread([this]() { this->SampleForever(); });
+  sampling_thread = std::thread([this]() { this->SampleForever(); });
 }
 
 void StatsCollector::SampleForever() {
-    state = StatsCollectorStates::SAMPLING;
-    LogPrintf("Started StatsCollector sampling thread\n");
+  m_state = StatsCollectorStates::SAMPLING;
+  LogPrintf("Started StatsCollector sampling thread\n");
 
-    while (StatsCollectorStates::SAMPLING == state) {
-        Sample();
-        std::this_thread::sleep_for(std::chrono::milliseconds(sampling_interval));
-    }
+  while (StatsCollectorStates::SAMPLING == m_state) {
+    Sample();
+    std::this_thread::sleep_for(std::chrono::milliseconds(m_sampling_interval));
+  }
 }
 
 void StatsCollector::Sample() {
-    assert(StatsCollectorStates::SAMPLING == state);
+  assert(StatsCollectorStates::SAMPLING == m_state);
 
-    const auto now = std::chrono::system_clock::now();
-    const auto duration = now.time_since_epoch();
-    const auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
-        duration
-    ).count();
+  const auto now = std::chrono::system_clock::now();
+  const auto duration = now.time_since_epoch();
+  const auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
+    duration
+  ).count();
 
-    output_file
-        << timestamp                << ','
-        << height                   << ','
-        << mempool_num_transactions << ','
-        << mempool_used_memory      << ','
-        << peers_num_inbound        << ','
-        << peers_num_outbound       << ','
-        << tip_stats_active         << ','
-        << tip_stats_valid_fork     << ','
-        << tip_stats_valid_header   << ','
-        << tip_stats_headers_only   << ','
-        << tip_stats_invalid
-        << std::endl;
+  output_file
+    << timestamp                << ','
+    << m_height                   << ','
+    << m_last_justified_epoch     << ','
+    << m_last_finalized_epoch     << ','
+    << m_current_epoch            << ','
+    << m_current_dinasty          << ','
+    << m_mempool_num_transactions << ','
+    << m_mempool_used_memory      << ','
+    << m_peers_num_inbound        << ','
+    << m_peers_num_outbound       << ','
+    << m_tip_stats_active         << ','
+    << m_tip_stats_valid_fork     << ','
+    << m_tip_stats_valid_header   << ','
+    << m_tip_stats_headers_only   << ','
+    << m_tip_stats_invalid
+    << std::endl;
 }
 
 void StatsCollector::StopSampling() {
-    if (
-        StatsCollectorStates::CLOSED == state ||
-        StatsCollectorStates::CLOSING == state
-    ) {
-        return;  // There's no need to continue
-    }
+  if (
+    StatsCollectorStates::CLOSED == m_state ||
+    StatsCollectorStates::CLOSING == m_state
+  ) {
+    return;  // There's no need to continue
+  }
 
-    state = StatsCollectorStates::CLOSING;
+  m_state = StatsCollectorStates::CLOSING;
 
-    if (sampling_thread.joinable()) {
-        sampling_thread.join();
-    }
+  if (sampling_thread.joinable()) {
+    sampling_thread.join();
+  }
 
-    if (output_file.is_open()) {
-        output_file.flush();
-        output_file.close();
-    }
+  if (output_file.is_open()) {
+    output_file.flush();
+    output_file.close();
+  }
 
-    state = StatsCollectorStates::CLOSED;
+  m_state = StatsCollectorStates::CLOSED;
 }
 
 void StatsCollector::SetHeight(uint32_t value) {
-    height = value;
+  m_height = value;
+}
+
+void StatsCollector::SetLastJustifiedEpoch(uint32_t value) {
+  m_last_justified_epoch = value;
+}
+
+void StatsCollector::SetLastFinalizedEpoch(uint32_t value) {
+  m_last_finalized_epoch = value;
+}
+
+void StatsCollector::SetCurrentEpoch(uint32_t value) {
+  m_current_epoch = value;
+}
+
+void StatsCollector::SetCurrentDinasty(uint32_t value) {
+  m_current_dinasty = value;
 }
 
 void StatsCollector::SetMempoolNumTransactions(uint32_t value) {
-    mempool_num_transactions = value;
+  m_mempool_num_transactions = value;
 }
 
 void StatsCollector::SetMempoolUsedMemory(uint64_t value) {
-    mempool_used_memory = value;
+  m_mempool_used_memory = value;
 }
 
 void StatsCollector::SetTipStatsActive(uint16_t value) {
-    tip_stats_active = value;
+  m_tip_stats_active = value;
 }
 
 void StatsCollector::SetTipStatsValidFork(uint16_t value) {
-    tip_stats_valid_fork = value;
+  m_tip_stats_valid_fork = value;
 }
 
 void StatsCollector::SetTipStatsValidHeader(uint16_t value) {
-    tip_stats_valid_header = value;
+  m_tip_stats_valid_header = value;
 }
 
 void StatsCollector::SetTipStatsHeadersOnly(uint16_t value) {
-    tip_stats_headers_only = value;
+  m_tip_stats_headers_only = value;
 }
 
 void StatsCollector::SetTipStatsInvalid(uint16_t value) {
-    tip_stats_invalid = value;
+  m_tip_stats_invalid = value;
 }
 
 void StatsCollector::SetPeersStats(uint16_t num_inbound, uint16_t num_outbound) {
-    peers_num_inbound = num_inbound;
-    peers_num_outbound = num_outbound;
+  m_peers_num_inbound = num_inbound;
+  m_peers_num_outbound = num_outbound;
 }
 
 }

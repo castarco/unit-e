@@ -217,6 +217,7 @@ class FinalizationState : public FinalizationStateData {
   CAmount GetDynastyDelta(uint32_t dynasty);
   void RegisterLastTx(uint160 &validatorAddress, CTransactionRef tx);
   void ProcessNewCommit(const CTransactionRef &tx);
+  void CollectStats() const;
 
   mutable CCriticalSection cs_esperanza;
 
